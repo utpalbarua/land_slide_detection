@@ -90,9 +90,16 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     if not out.isOpened():
         status_text.text("Error initializing video writer with XVID")
         logger.error("VideoWriter failed to initialize with XVID")
+        cap.release()
         return None, []
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames == 0:
+        status_text.text("Error: Video has no frames")
+        logger.error("Video has no frames to process")
+        cap.release()
+        return None, []
+    
     processed_frames = 0
     all_detections = []
     
@@ -118,7 +125,6 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     
     cap.release()
     out.release()
-    cv2.destroyAllWindows()
     time.sleep(1)  # Ensure file is written
     
     if not os.path.exists(temp_video_path) or os.path.getsize(temp_video_path) == 0:
