@@ -47,7 +47,16 @@ def detect_landslide(model, image, conf_threshold=0.25):
         logger.error(f"Detection failed: {str(e)}")
         return image, []  # Return original image if detection fails
 
-def process_video(model, video_path, progress_bar, status_text, conf_threshold=0.25):
+import os
+import time
+import cv2
+import streamlit as st
+from datetime import datetime
+import logging
+
+logger = logging.getLogger()
+
+def process_video(model, video_path, progress_bar, status_text, conf_threshold=0.10):
     """Process video with live display at original resolution"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -58,23 +67,37 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     temp_video_path = f"output_detected_{timestamp}.mp4"
     
     fourcc = {
-    "mp4": cv2.VideoWriter_fourcc(*'mp4v'),   # MP4
-    "avi": cv2.VideoWriter_fourcc(*'XVID'),   # AVI
-    "mov": cv2.VideoWriter_fourcc(*'avc1'),   # MOV (H.264)
-    "mpeg4": cv2.VideoWriter_fourcc(*'mp4v')  # MPEG-4
+        "mp4": cv2.VideoWriter_fourcc(*'mp4v'),
+        "avi": cv2.VideoWriter_fourcc(*'XVID'),
+        "mov": cv2.VideoWriter_fourcc(*'avc1'),
+        "mpeg4": cv2.VideoWriter_fourcc(*'mp4v')
     }
+    
+    # Extract file extension and determine codec
+    file_extension = temp_video_path.split('.')[-1]
+    codec = fourcc.get(file_extension, cv2.VideoWriter_fourcc(*'mp4v'))  # Default codec
+
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    # Create a temporary file for writing the video
-    out = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
+    # Ensure the output directory exists
+    temp_dir = os.path.dirname(temp_video_path)
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
     
+    # Create VideoWriter
+    out = cv2.VideoWriter(temp_video_path, codec, fps, (frame_width, frame_height))
+    if not out.isOpened():
+        st.error("Error opening video writer")
+        return None, []
+
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     processed_frames = 0
     all_detections = []
     
     status_text.text(f"Processing video live... {frame_width}x{frame_height} at {fps} FPS")
+    
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -96,9 +119,8 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     
     cap.release()
     out.release()
-    time.sleep(1)  # Ensure file is written
     
-    # Ensure video file is properly closed before returning
+    # Ensure video file is properly written
     logger.info(f"Video processing completed: {temp_video_path}")
     
     # Check if video was created successfully
@@ -107,6 +129,7 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
         return None, all_detections
         
     return temp_video_path, all_detections
+
 
 def plot_confidence_distribution(detections):
     """Plot confidence score distribution"""
