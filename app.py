@@ -448,7 +448,7 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
 
 def main():
     st.set_page_config(layout="wide", page_title="Landslide Detection App")
-    st.markdown("## 🌍 Landslide Detection using YOLO")
+    st.markdown("## 🌍 Landslide Detection App")
     
     query_params = st.query_params
     default_threshold = float(query_params.get("threshold", [0.10])[0])
@@ -507,7 +507,6 @@ def main():
         
         st.markdown("---")
         st.subheader("📊 Information")
-        st.write("- Uses **YOLO (best.pt)** with configurable threshold.")
         st.write("- Includes P-curve, PR-curve, and R-curve visualizations.")
         st.write("- Adjust thresholds to optimize performance.")
     
@@ -619,7 +618,7 @@ def main():
     st.markdown("---")
     st.markdown("""
         <footer style='text-align: center; color: gray;'>
-            Landslide Detection App v1.6 | Powered by YOLO & Streamlit
+            Landslide Detection App v1.6
         </footer>
     """, unsafe_allow_html=True)
 
