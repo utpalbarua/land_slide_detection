@@ -21,4 +21,5 @@ fi
 # Install Python dependencies
 pip install -r requirements.txt
 
+sudo apt update && sudo apt install -y ffmpeg libavcodec-extra
 echo "Setup completed successfully!"
