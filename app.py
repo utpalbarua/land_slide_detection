@@ -12,6 +12,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import io
+import subprocess
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
 
 # Set up logging
@@ -47,27 +48,48 @@ def detect_landslide(model, image, conf_threshold=0.25):
         logger.error(f"Detection failed: {str(e)}")
         return image, []  # Return original image if detection fails
 
+def convert_video(input_path, output_path):
+    """Convert video to H.264/MP4 using system-installed FFmpeg"""
+    try:
+        cmd = [
+            'ffmpeg', '-i', input_path, '-c:v', 'libx264', '-preset', 'fast',
+            '-c:a', 'aac', output_path, '-y'
+        ]
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info(f"Video converted successfully: {output_path}")
+        return output_path
+    except subprocess.CalledProcessError as e:
+        st.error(f"FFmpeg conversion failed: {str(e.stderr.decode())}")
+        logger.error(f"FFmpeg conversion failed: {str(e.stderr.decode())}")
+        return None
+    except FileNotFoundError:
+        st.error("FFmpeg not found. Please install FFmpeg (see README for instructions).")
+        logger.error("FFmpeg executable not found in system PATH")
+        return None
+
 def process_video(model, video_path, progress_bar, status_text, conf_threshold=0.10):
-    """Process video with live display at original resolution"""
+    """Process video with live display at original resolution, using XVID and converting to MP4"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         status_text.text("Error opening video file")
+        logger.error(f"Failed to open video file: {video_path}")
         return None, []
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_video_path = f"output_detected_{timestamp}.mp4"
-   
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    temp_video_path = f"temp_output_{timestamp}.avi"  # Initial output with XVID
+    final_video_path = f"output_detected_{timestamp}.mp4"  # Final MP4 output
+    
+    # Use XVID codec initially (more reliable for OpenCV writing)
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    # Create a temporary file for writing the video
     out = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
     
-    # Check if video writer initialized successfully
     if not out.isOpened():
-        status_text.text("Error initializing video writer")
+        status_text.text("Error initializing video writer with XVID")
+        logger.error("VideoWriter failed to initialize with XVID")
         return None, []
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -81,11 +103,9 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
         if not ret:
             break
             
-        # Convert input frame from BGR (OpenCV) to RGB for YOLO processing
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         result_frame, detections = detect_landslide(model, frame_rgb, conf_threshold)
         
-        # Convert result_frame (RGB) to BGR for video writing
         result_frame_bgr = cv2.cvtColor(result_frame, cv2.COLOR_RGB2BGR)
         out.write(result_frame_bgr)
         
@@ -98,15 +118,30 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     
     cap.release()
     out.release()
+    cv2.destroyAllWindows()
     time.sleep(1)  # Ensure file is written
     
-    # Final check to ensure the video file is created and written
     if not os.path.exists(temp_video_path) or os.path.getsize(temp_video_path) == 0:
-        status_text.text("Error: Video writing failed - output file is empty or not created")
+        status_text.text("Error: Initial video writing failed - output file is empty or not created")
+        logger.error(f"Initial video file is empty or not created: {temp_video_path}")
         return None, all_detections
     
-    status_text.text(f"Video processing completed: {temp_video_path}")
-    return temp_video_path, all_detections
+    # Convert the video to MP4 with H.264
+    status_text.text("Converting video to MP4...")
+    converted_path = convert_video(temp_video_path, final_video_path)
+    
+    if converted_path and os.path.exists(converted_path) and os.path.getsize(converted_path) > 0:
+        status_text.text(f"Video processing and conversion completed: {converted_path}")
+        # Clean up the temporary AVI file
+        try:
+            os.unlink(temp_video_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete temp file {temp_video_path}: {str(e)}")
+        return converted_path, all_detections
+    else:
+        status_text.text("Error: Video conversion failed, falling back to AVI")
+        logger.warning(f"Video conversion failed, using fallback: {temp_video_path}")
+        return temp_video_path, all_detections
 
 def plot_confidence_distribution(detections):
     """Plot confidence score distribution"""
@@ -129,27 +164,21 @@ def calculate_pr_curves(detections, num_thresholds=100):
     if not detections:
         return None, None, None, None
     
-    # Set up thresholds from 0 to 1
     thresholds = np.linspace(0, 1, num_thresholds)
     precisions = []
     recalls = []
     f1_scores = []
     
-    # Simulating ground truth data (assuming all detections are positive examples)
-    # In a real scenario, you would compare against actual ground truth
     total_positives = len(detections)
     
     for threshold in thresholds:
-        # Count detections above threshold
         true_positives = sum(1 for d in detections if d['confidence'] >= threshold)
         false_positives = 0  # Simplified assumption
         false_negatives = total_positives - true_positives
         
-        # Calculate precision and recall
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
         recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
         
-        # Calculate F1 score
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
         
         precisions.append(precision)
@@ -163,9 +192,7 @@ def plot_pr_curve(thresholds, precisions, recalls, current_threshold=None):
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(recalls, precisions, color='blue', marker='.', label='Precision-Recall curve')
     
-    # Add current threshold marker if provided
     if current_threshold is not None:
-        # Find the closest threshold value
         threshold_idx = (np.abs(thresholds - current_threshold)).argmin()
         current_precision = precisions[threshold_idx]
         current_recall = recalls[threshold_idx]
@@ -178,7 +205,6 @@ def plot_pr_curve(thresholds, precisions, recalls, current_threshold=None):
     ax.grid(True)
     ax.legend()
     
-    # Calculate AUC
     pr_auc = auc(recalls, precisions) if len(recalls) > 1 else 0
     ax.text(0.5, 0.2, f'AUC = {pr_auc:.3f}', fontsize=12)
     
@@ -193,9 +219,7 @@ def plot_p_curve(thresholds, precisions, current_threshold=None):
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(thresholds, precisions, color='green', marker='.', label='Precision curve')
     
-    # Add current threshold marker if provided
     if current_threshold is not None:
-        # Find the closest threshold value
         threshold_idx = (np.abs(thresholds - current_threshold)).argmin()
         current_precision = precisions[threshold_idx]
         ax.scatter([current_threshold], [current_precision], color='red', s=100, zorder=5, 
@@ -218,9 +242,7 @@ def plot_r_curve(thresholds, recalls, current_threshold=None):
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.plot(thresholds, recalls, color='red', marker='.', label='Recall curve')
     
-    # Add current threshold marker if provided
     if current_threshold is not None:
-        # Find the closest threshold value
         threshold_idx = (np.abs(thresholds - current_threshold)).argmin()
         current_recall = recalls[threshold_idx]
         ax.scatter([current_threshold], [current_recall], color='blue', s=100, zorder=5, 
@@ -294,14 +316,12 @@ def filter_detections(all_detections, threshold):
 
 def show_detection_results(detection_data, current_threshold=0.25, export_csv=False, download_enabled=False, debug_mode=False, image_shape=None, frame_dims=None):
     """Display detection statistics and results with interactive threshold control"""
-    # Store all detections for filtering
     all_detections = detection_data.copy() if detection_data else []
     
     if all_detections:
         st.markdown("---")
         st.subheader("🎚️ Confidence Threshold Level")
         
-        # Add threshold slider
         threshold = st.slider(
             " ",
             min_value=0.05,
@@ -310,13 +330,11 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
             step=0.05,
         )
         
-        # Filter detections based on threshold
         filtered_detections = filter_detections(all_detections, threshold)
         
         st.markdown("---")
         st.subheader("📈 Detection Statistics")
         
-        # Display counts before and after filtering
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Total Detections (All)", len(all_detections))
@@ -326,19 +344,16 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
             reduction = ((len(all_detections) - len(filtered_detections)) / len(all_detections) * 100) if len(all_detections) > 0 else 0
             st.metric("Reduction %", f"{reduction:.1f}%")
         
-        # Display dataframe of filtered detections
         if filtered_detections:
             df = pd.DataFrame(filtered_detections)
             st.dataframe(df)
         else:
             st.warning("No detections above the current threshold.")
         
-        # Confidence Distribution Plot
         conf_plot = plot_confidence_distribution(all_detections)
         if conf_plot:
             st.image(conf_plot, caption="Confidence Score Distribution (All Detections)", use_container_width=True)
         
-        # Export Detections to CSV
         if export_csv and not df.empty and download_enabled:
             csv_buffer = df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Detections CSV", 
@@ -346,7 +361,6 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
                              file_name=f"detections_threshold_{threshold:.2f}.csv", 
                              mime="text/csv")
     
-        # Detection Summary
         st.markdown("---")
         st.subheader("📋 Detection Summary")
         
@@ -354,7 +368,6 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
             avg_conf = np.mean([d['confidence'] for d in filtered_detections])
             st.write(f"Average Confidence of Filtered Detections: {avg_conf:.2%}")
             
-            # Class distribution if available
             if 'class' in filtered_detections[0]:
                 class_counts = {}
                 for d in filtered_detections:
@@ -364,10 +377,8 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
                 for cls, count in class_counts.items():
                     st.write(f"- {cls}: {count} ({count/len(filtered_detections):.1%})")
         
-        # Show curve explanations
         show_curve_explanations()
         
-        # PR Curves
         st.markdown("---")
         st.subheader("🔍 Precision-Recall Analysis")
         
@@ -376,24 +387,19 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
         if thresholds is not None:
             col1, col2 = st.columns(2)
             
-            # PR curve with current threshold
             pr_plot = plot_pr_curve(thresholds, precisions, recalls, threshold)
             col1.image(pr_plot, caption="Precision-Recall Curve", use_container_width=True)
             
-            # P curve with current threshold
             p_plot = plot_p_curve(thresholds, precisions, threshold)
             col2.image(p_plot, caption="Precision Curve", use_container_width=True)
             
-            # R curve with current threshold
             r_plot = plot_r_curve(thresholds, recalls, threshold)
             st.image(r_plot, caption="Recall Curve", use_container_width=True)
             
-            # Find best F1 score
             best_f1_idx = np.argmax(f1_scores)
             best_f1_threshold = thresholds[best_f1_idx]
             best_f1 = f1_scores[best_f1_idx]
             
-            # Recommendations
             st.markdown("---")
             st.subheader("💡 Threshold Recommendations")
             
@@ -405,7 +411,6 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
                     st.experimental_rerun()
             
             with col2:
-                # Find high precision threshold (e.g., precision > 0.9)
                 high_prec_indices = [i for i, p in enumerate(precisions) if p > 0.9]
                 high_prec_threshold = thresholds[high_prec_indices[0]] if high_prec_indices else 0.7
                 st.metric("High Precision Threshold", f"{high_prec_threshold:.2f}")
@@ -414,7 +419,6 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
                     st.experimental_rerun()
             
             with col3:
-                # Find high recall threshold (e.g., recall > 0.9)
                 high_recall_indices = [i for i, r in enumerate(recalls) if r > 0.9]
                 high_recall_threshold = thresholds[high_recall_indices[-1]] if high_recall_indices else 0.2
                 st.metric("High Recall Threshold", f"{high_recall_threshold:.2f}")
@@ -422,7 +426,6 @@ def show_detection_results(detection_data, current_threshold=0.25, export_csv=Fa
                     st.experimental_set_query_params(threshold=high_recall_threshold)
                     st.experimental_rerun()
     
-        # Debug Information
         if debug_mode:
             st.markdown("---")
             st.subheader("🛠️ Debug Information")
@@ -441,20 +444,16 @@ def main():
     st.set_page_config(layout="wide", page_title="Landslide Detection App")
     st.markdown("## 🌍 Landslide Detection using YOLO")
     
-    # Get query parameters
     query_params = st.query_params
     default_threshold = float(query_params.get("threshold", [0.10])[0])
     
-    # Load model
     model = load_model()
     if model is None:
         return
     
-    # Sidebar configuration
     with st.sidebar:
         st.header(" ☰ Home Menu")
         
-        # Theme Toggle
         theme = st.selectbox("🎨 Theme", ["Light", "Dark"])
         if theme == "Dark":
             st.markdown("""
@@ -466,11 +465,9 @@ def main():
                 </style>
                 """, unsafe_allow_html=True)
         
-        # Input type selection
         st.subheader("📥 Input Selection")
         input_type = st.radio("Select Input Type:", ("Image", "Video"))
         
-        # Confidence threshold
         conf_threshold = st.slider(
             "Detection Confidence",
             min_value=0.05,
@@ -480,61 +477,53 @@ def main():
             help="Initial confidence threshold for detection (can be adjusted later)"
         )
         
-        # File upload based on input type
         if input_type == "Image":
             uploaded_file = st.file_uploader("📤 Upload Image", 
                                           type=["jpg", "png", "jpeg"], 
                                           accept_multiple_files=False)
-        else:  # Video
+        else:
             uploaded_file = st.file_uploader("📤 Upload Video", 
                                           type=["mp4", "avi", "mov"], 
                                           accept_multiple_files=False)
         
-        # Display file info if uploaded
         if uploaded_file is not None:
             file_size = uploaded_file.size / (1024 * 1024)
             st.write(f"File Size: {file_size:.2f} MB")
         
-        # Debug Mode
         st.markdown("---")
         debug_mode = st.checkbox("Debug Mode", value=False, 
                                help="Show detailed detection info and logs")
         
-        # Download Options
         st.markdown("---")
         st.subheader("💾 Download Options")
         download_enabled = st.checkbox("Enable Download", value=True)
         export_csv = st.checkbox("Export Detections as CSV", value=False)
         
-        # Information
         st.markdown("---")
         st.subheader("📊 Information")
         st.write("- Uses **YOLO (best.pt)** with configurable threshold.")
         st.write("- Includes P-curve, PR-curve, and R-curve visualizations.")
-        st.write("- Adjust thresholds to optimize performance.")
+        st.write("- Requires FFmpeg for video conversion (see README).")
     
-    # Main content area
     if uploaded_file is None:
         st.info("👈 Please upload a file in the sidebar to begin detection.")
         
-        # Help Section when no file is uploaded
         with st.expander("❓ Help & Instructions"):
             st.write("""
             - Select input type (Image or Video) in the sidebar.
             - Set your initial confidence threshold.
             - Upload your file using the uploader.
             - The system will automatically process your input.
-            - You can adjust the threshold after processing to see how it affects detections.
+            - For videos, ensure FFmpeg is installed (see README).
+            - Adjust thresholds after processing to see how it affects detections.
             - Use the performance curves to select optimal threshold values.
             """)
             
-        # Show explanation of curves even when no file is uploaded
         show_curve_explanations()
     else:
-        # Process based on input type
         if input_type == "Image":
             image = Image.open(uploaded_file)
-            image_np = np.array(image)  # PIL image is RGB
+            image_np = np.array(image)
             
             col1, col2 = st.columns(2)
             with col1:
@@ -568,7 +557,6 @@ def main():
                 temp_file.write(uploaded_file.read())
                 temp_video_path = temp_file.name
             
-            # Get video dimensions for debug info
             frame_dims = None
             cap = cv2.VideoCapture(temp_video_path)
             if cap.isOpened():
@@ -594,33 +582,28 @@ def main():
                     st.sidebar.write(f"Processing Time: {processing_time:.2f} seconds")
                     st.sidebar.write(f"Output Size: {os.path.getsize(processed_video_path)/(1024*1024):.2f} MB")
                     
-                    # Show final video after processing is complete
                     st.subheader("📹 Detected Video")
-                    
-                    # Convert the video to a format compatible with Streamlit's video player
                     try:
-                        # Load the video and re-encode it to ensure compatibility
                         with open(processed_video_path, 'rb') as video_file:
-                            st.video(video_file)
+                            st.video(video_file, format="video/mp4" if processed_video_path.endswith('.mp4') else "video/avi")
                     except Exception as e:
                         st.error(f"Error displaying video: {str(e)}")
                         logger.error(f"Video display error: {str(e)}")
+                        st.info("Try downloading the video and playing it locally to verify its content.")
                     
                     if download_enabled:
                         with open(processed_video_path, 'rb') as video_file:
                             video_bytes = video_file.read()
                         st.download_button("Download Detected Video", 
                                          video_bytes, 
-                                         file_name="detected_video.mp4", 
-                                         mime="video/mp4", 
+                                         file_name=os.path.basename(processed_video_path),
+                                         mime="video/mp4" if processed_video_path.endswith('.mp4') else "video/avi",
                                          key="download_video")
                     
                     show_detection_results(detections, conf_threshold, export_csv, download_enabled, debug_mode, frame_dims=frame_dims)
                     
-                    # Clean up temp files at the end
                     try:
                         os.unlink(temp_video_path)
-                        # Only attempt to delete the processed video if it exists
                         if os.path.exists(processed_video_path):
                             os.unlink(processed_video_path)
                     except Exception as e:
