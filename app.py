@@ -12,6 +12,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import io
+import subprocess
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
 
 # Set up logging
@@ -47,8 +48,27 @@ def detect_landslide(model, image, conf_threshold=0.25):
         logger.error(f"Detection failed: {str(e)}")
         return image, []  # Return original image if detection fails
 
+def convert_video(input_path, output_path):
+    """Convert video to H.264/MP4 using FFmpeg"""
+    try:
+        cmd = [
+            'ffmpeg', '-i', input_path, '-c:v', 'libx264', '-preset', 'fast',
+            '-c:a', 'aac', output_path, '-y'
+        ]
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info(f"Video converted successfully: {output_path}")
+        return output_path
+    except subprocess.CalledProcessError as e:
+        st.error(f"FFmpeg conversion failed: {str(e.stderr.decode())}")
+        logger.error(f"FFmpeg conversion failed: {str(e.stderr.decode())}")
+        return None
+    except FileNotFoundError:
+        st.error("FFmpeg not found. Ensure FFmpeg is installed (should be handled via packages.txt).")
+        logger.error("FFmpeg executable not found in system PATH")
+        return None
+
 def process_video(model, video_path, progress_bar, status_text, conf_threshold=0.10):
-    """Process video with live display at original resolution"""
+    """Process video with live display at original resolution, using XVID and converting to MP4"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         status_text.text("Error opening video file")
@@ -56,15 +76,16 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
         return None, []
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_video_path = f"output_detected_{timestamp}.avi"  # Use AVI with XVID for compatibility
+    temp_video_path = f"temp_output_{timestamp}.avi"  # Initial output with XVID
+    final_video_path = f"output_detected_{timestamp}.mp4"  # Final MP4 output
     
-    # Use XVID codec (more reliable for OpenCV writing)
+    # Use XVID codec initially (more reliable for OpenCV writing)
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+    out = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
     
     if not out.isOpened():
         status_text.text("Error initializing video writer with XVID")
@@ -106,13 +127,27 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     out.release()
     time.sleep(1)  # Ensure file is written
     
-    if not os.path.exists(output_video_path) or os.path.getsize(output_video_path) == 0:
-        status_text.text("Error: Video writing failed - output file is empty or not created")
-        logger.error(f"Output video file is empty or not created: {output_video_path}")
+    if not os.path.exists(temp_video_path) or os.path.getsize(temp_video_path) == 0:
+        status_text.text("Error: Initial video writing failed - output file is empty or not created")
+        logger.error(f"Initial video file is empty or not created: {temp_video_path}")
         return None, all_detections
     
-    status_text.text(f"Video processing completed: {output_video_path}")
-    return output_video_path, all_detections
+    # Convert the video to MP4 with H.264
+    status_text.text("Converting video to MP4...")
+    converted_path = convert_video(temp_video_path, final_video_path)
+    
+    if converted_path and os.path.exists(converted_path) and os.path.getsize(converted_path) > 0:
+        status_text.text(f"Video processing and conversion completed: {converted_path}")
+        # Clean up the temporary AVI file
+        try:
+            os.unlink(temp_video_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete temp file {temp_video_path}: {str(e)}")
+        return converted_path, all_detections
+    else:
+        status_text.text("Error: Video conversion failed, falling back to AVI")
+        logger.warning(f"Video conversion failed, using fallback: {temp_video_path}")
+        return temp_video_path, all_detections
 
 def plot_confidence_distribution(detections):
     """Plot confidence score distribution"""
@@ -487,7 +522,6 @@ def main():
             - The system will automatically process your input.
             - You can adjust the threshold after processing to see how it affects detections.
             - Use the performance curves to select optimal threshold values.
-            - Note: Video output is in AVI format and may not display in all browsers. Download and play locally if needed.
             """)
             
         show_curve_explanations()
@@ -556,11 +590,11 @@ def main():
                     st.subheader("📹 Detected Video")
                     try:
                         with open(processed_video_path, 'rb') as video_file:
-                            st.video(video_file, format="video/avi")
+                            st.video(video_file, format="video/mp4" if processed_video_path.endswith('.mp4') else "video/avi")
                     except Exception as e:
                         st.error(f"Error displaying video: {str(e)}")
                         logger.error(f"Video display error: {str(e)}")
-                        st.info("The video is in AVI format and may not display in all browsers. Please download and play it locally to verify its content.")
+                        st.info("Try downloading the video and playing it locally to verify its content.")
                     
                     if download_enabled:
                         with open(processed_video_path, 'rb') as video_file:
@@ -568,7 +602,7 @@ def main():
                         st.download_button("Download Detected Video", 
                                          video_bytes, 
                                          file_name=os.path.basename(processed_video_path),
-                                         mime="video/avi",
+                                         mime="video/mp4" if processed_video_path.endswith('.mp4') else "video/avi",
                                          key="download_video")
                     
                     show_detection_results(detections, conf_threshold, export_csv, download_enabled, debug_mode, frame_dims=frame_dims)
