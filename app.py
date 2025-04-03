@@ -58,7 +58,7 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     temp_video_path = f"output_detected_{timestamp}.mp4"
     
     # Changed codec to H.264 for better compatibility
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 codec
+    fourcc = cv2.VideoWriter_fourcc(*"MJPG")
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
