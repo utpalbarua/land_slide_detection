@@ -47,18 +47,18 @@ def detect_landslide(model, image, conf_threshold=0.25):
         logger.error(f"Detection failed: {str(e)}")
         return image, []  # Return original image if detection fails
 
-def process_video(model, video_path, progress_bar, status_text, conf_threshold=0.25):
+def process_video(model, video_path, progress_bar, status_text, conf_threshold=0.10):
     """Process video with live display at original resolution"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        st.error("Error opening video file")
+        status_text.text("Error opening video file")
         return None, []
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_video_path = f"output_detected_{timestamp}.avi"
+    temp_video_path = f"output_detected_{timestamp}.avi"  # Change to .avi if using XVID
     
-    # Changed codec to H.264 for better compatibility
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # H.264 codec
+    # Use XVID for .avi or avc1 for H.264 .mp4
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # XVID codec for .avi files
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -66,11 +66,17 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     # Create a temporary file for writing the video
     out = cv2.VideoWriter(temp_video_path, fourcc, fps, (frame_width, frame_height))
     
+    # Check if video writer initialized successfully
+    if not out.isOpened():
+        status_text.text("Error initializing video writer")
+        return None, []
+    
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     processed_frames = 0
     all_detections = []
     
     status_text.text(f"Processing video live... {frame_width}x{frame_height} at {fps} FPS")
+    
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -86,6 +92,7 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
         
         processed_frames += 1
         all_detections.extend(detections)
+        
         progress_percentage = int((processed_frames / total_frames) * 100)
         progress_bar.progress(progress_percentage / 100)
         status_text.text(f"Processing Video: {progress_percentage}%")
@@ -94,14 +101,12 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
     out.release()
     time.sleep(1)  # Ensure file is written
     
-    # Ensure video file is properly closed before returning
-    logger.info(f"Video processing completed: {temp_video_path}")
-    
-    # Check if video was created successfully
+    # Final check to ensure the video file is created and written
     if not os.path.exists(temp_video_path) or os.path.getsize(temp_video_path) == 0:
-        logger.error("Video writing failed - output file is empty or not created")
+        status_text.text("Error: Video writing failed - output file is empty or not created")
         return None, all_detections
-        
+    
+    status_text.text(f"Video processing completed: {temp_video_path}")
     return temp_video_path, all_detections
 
 def plot_confidence_distribution(detections):
