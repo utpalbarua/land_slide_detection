@@ -10,3 +10,4 @@ scikit-learn==1.6.1
 seaborn==0.13.2
 opencv-python-headless==4.9.0.80
 ultralytics==8.2.0
+ffmpeg-python
