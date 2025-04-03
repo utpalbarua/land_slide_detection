@@ -55,7 +55,7 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
         return None, []
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_video_path = f"output_detected_{timestamp}.mp4"
+    temp_video_path = f"output_detected_{timestamp}.avi"
     
     # Changed codec to H.264 for better compatibility
     fourcc = cv2.VideoWriter_fourcc(*'XVID')  # H.264 codec
