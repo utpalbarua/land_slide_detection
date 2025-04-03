@@ -6,7 +6,7 @@ matplotlib==3.9.2
 rich==13.0.0
 scikit-learn==1.6.1
 seaborn==0.13.2
-opencv-contrib-python==4.11.0.86
+opencv-python-headless==4.11.0.86  # Reverted
 torchvision==0.19.0
 ultralytics==8.3.27
 ultralytics-thop==2.0.10
