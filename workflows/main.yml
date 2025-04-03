@@ -21,12 +21,13 @@ jobs:
         with:
           python-version: '3.8'
 
-      - name: Install FFmpeg
+      - name: Install OpenGL and FFmpeg dependencies
         run: |
           sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6
           sudo apt-get install -y ffmpeg libavcodec-extra
 
-      - name: Install Dependencies
+      - name: Install Python Dependencies
         run: |
           pip install -r requirements.txt
 
@@ -36,4 +37,4 @@ jobs:
 
       - name: Deploy or Run Code
         run: |
-          python app.py  # Replace this with your actual script or application
+          streamlit run app.py  # Replace this with your actual script or application
