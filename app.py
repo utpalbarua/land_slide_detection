@@ -55,10 +55,9 @@ def process_video(model, video_path, progress_bar, status_text, conf_threshold=0
         return None, []
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_video_path = f"output_detected_{timestamp}.avi"  # Change to .avi if using XVID
+    temp_video_path = f"output_detected_{timestamp}.mp4"  # Change to .avi if using XVID
     
-    # Use XVID for .avi or avc1 for H.264 .mp4
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # XVID codec for .avi files
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
